@@ -276,6 +276,7 @@ async function runColdEmailPipeline(options: RunOptions) {
     model: modelName,
     temperature: 0.7,
     apiKey,
+    maxRetries: 6,
   });
 
   // 4. Get prompt (from flag or interactive input)

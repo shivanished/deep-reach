@@ -19,6 +19,8 @@ import { join } from "path";
 // Orchestrator Configuration
 // ============================================================================
 
+const COMPANY_CONCURRENCY_LIMIT = 3;
+
 const ORCHESTRATOR_PROMPT = `You coordinate a recruiting outreach pipeline.
 
 IMPORTANT: You will be given a WORKSPACE DIRECTORY and STORAGE DIRECTORY.
@@ -66,17 +68,22 @@ IF REJECTED: The human provides feedback (e.g., "more startup focused", "differe
 
 CRITICAL: After rejection, you MUST find new companies and call review_companies again. Do NOT proceed to Stage 2 until approved. Do NOT give up or end the run.
 
-STAGE 2: PARALLEL COMPANY PROCESSING (CRITICAL)
-After finding companies, invoke the task tool MULTIPLE TIMES IN A SINGLE RESPONSE.
-Each task should process one company using the "company-flow" subagent.
+STAGE 2: PARALLEL COMPANY PROCESSING
+Process companies in batches of ${COMPANY_CONCURRENCY_LIMIT} at a time to avoid API rate limits.
+Issue ${COMPANY_CONCURRENCY_LIMIT} task() calls, wait for them to complete, then issue the next batch.
+Repeat until all companies are processed.
 
-IMPORTANT: Do NOT process companies one at a time. Issue ALL task calls together.
-
-Example - issue ALL at once (include workspace in each task message):
-  task("company-flow", "Workspace: <workspace>. Process Acme Corp (acme.com): AI startup, hiring engineers")
-  task("company-flow", "Workspace: <workspace>. Process Beta Inc (beta.io): Fintech company, Series B")
-  task("company-flow", "Workspace: <workspace>. Process Gamma Co (gamma.com): Dev tools, remote-first")
-  ... (repeat for all selected companies)
+Example with batch size ${COMPANY_CONCURRENCY_LIMIT} and 6 companies (include workspace in each task message):
+  Batch 1 (issue all 3 together):
+    task("company-flow", "Workspace: <workspace>. Process Acme Corp (acme.com): AI startup, hiring engineers")
+    task("company-flow", "Workspace: <workspace>. Process Beta Inc (beta.io): Fintech company, Series B")
+    task("company-flow", "Workspace: <workspace>. Process Gamma Co (gamma.com): Dev tools, remote-first")
+  [wait for all 3 to finish]
+  Batch 2 (issue remaining together):
+    task("company-flow", "Workspace: <workspace>. Process Delta LLC (delta.io): SaaS, Series A")
+    task("company-flow", "Workspace: <workspace>. Process Echo Inc (echo.com): Climate tech")
+    task("company-flow", "Workspace: <workspace>. Process Foxtrot Co (foxtrot.ai): AI infrastructure")
+  [wait for all to finish before moving to Stage 3]
 
 Each company-flow task will:
 1. Research the company (1 quick search)
