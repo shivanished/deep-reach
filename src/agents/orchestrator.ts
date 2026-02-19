@@ -8,7 +8,7 @@ import type { BaseLanguageModel } from "@langchain/core/language_models/base";
 import type { BaseCheckpointSaver } from "@langchain/langgraph";
 import type { StructuredTool } from "@langchain/core/tools";
 import type { AgentMiddleware } from "langchain";
-import type { UserProfile, CompanyReviewItem, StreamEvent, InterruptChunk } from "@/core/types";
+import type { UserProfile, CompanyReviewItem, StreamEvent, InterruptChunk, CompanyEntry } from "@/core/types";
 import { SUBAGENT_DEFINITIONS, assignToolsToSubagent } from "./subagents";
 import { logger } from "@/utils/logger";
 import * as clack from "@clack/prompts";
@@ -109,8 +109,49 @@ After all company-flow tasks complete:
 4. Write the updated array back to <storage>/contacted.json
 5. Companies with status "FAILED" should NOT be added (they can be retried in future runs)
 
+RESUME MODE (CRITICAL):
+If the user message includes "RESUME_MODE: true", then:
+- Skip Stage 0, Stage 1, and Stage 1.5 completely.
+- Do NOT discover new companies and do NOT call review_companies.
+- Read the existing companies from <workspace>/companies.json.
+- Process ONLY the companies explicitly listed as pending in the user message.
+- Keep all existing SUCCESS companies untouched.
+- After processing pending companies, run Stage 3 update logic for newly successful companies.
+
 When all tasks complete, summarize results:
 - Number of companies processed
+- Total contacts found
+- Total drafts generated
+
+Use your built-in file system tools to read/write artifacts.`;
+
+const RESUME_ORCHESTRATOR_PROMPT = `You coordinate resuming a recruiting outreach pipeline.
+
+IMPORTANT: You will be given a WORKSPACE DIRECTORY and STORAGE DIRECTORY.
+- Workspace directory: for this run's files
+- Storage directory: for cross-run persistent data (contacted companies)
+Pass the workspace directory to all subagent tasks.
+
+RESUME RULES (STRICT):
+- Do NOT discover new companies.
+- Do NOT call review_companies.
+- Read existing <workspace>/companies.json.
+- Process ONLY the companies explicitly listed as pending in the user message.
+- Keep existing SUCCESS companies untouched.
+
+PROCESSING:
+Process pending companies in batches of ${COMPANY_CONCURRENCY_LIMIT}.
+Issue task("company-flow", ...) calls for each batch, wait for completion, then continue.
+
+POST-PROCESS:
+After all pending companies complete:
+1. Read <workspace>/companies.json and collect status "SUCCESS" companies
+2. Read <storage>/contacted.json (or initialize as [])
+3. Add newly successful companies with domain, name, contactedAt, runId
+4. Write updated contacted.json
+
+When all tasks complete, summarize results:
+- Number of companies processed in this resume run
 - Total contacts found
 - Total drafts generated
 
@@ -130,6 +171,7 @@ export interface OrchestratorConfig {
   checkpointer: BaseCheckpointSaver;
   projectRoot: string; // Physical disk path to project root (e.g., /Users/user/recruiting-agent)
   verbose?: boolean; // Show detailed tool-by-tool logging
+  resumeMode?: boolean;
 }
 
 // ============================================================================
@@ -138,7 +180,7 @@ export interface OrchestratorConfig {
 
 export function createRecruitingOrchestrator(config: OrchestratorConfig) {
   const log = logger.orchestrator;
-  const { model, tools, checkpointer, projectRoot } = config;
+  const { model, tools, checkpointer, projectRoot, resumeMode = false } = config;
 
   log.info("Creating recruiting orchestrator", { 
     projectRoot,
@@ -212,7 +254,7 @@ export function createRecruitingOrchestrator(config: OrchestratorConfig) {
   const agent = createDeepAgent({
     model,
     tools, // Custom tools (web_search, hunter, etc.)
-    systemPrompt: ORCHESTRATOR_PROMPT,
+    systemPrompt: resumeMode ? RESUME_ORCHESTRATOR_PROMPT : ORCHESTRATOR_PROMPT,
     checkpointer,
     backend: () => new FilesystemBackend({ 
       rootDir: projectRoot, // Physical disk path (project root)
@@ -220,7 +262,7 @@ export function createRecruitingOrchestrator(config: OrchestratorConfig) {
     }),
     subagents,
     interruptOn: {
-      review_companies: true, // Pause for human review after company discovery
+      review_companies: !resumeMode, // Pause for human review after company discovery
       // Future: enable human-in-the-loop for sending
       // sendEmail: true, // Would require approval before sending
     },
@@ -255,10 +297,13 @@ export async function runPipeline(
   runId: string,
   profile: UserProfile,
   userPrompt: string | undefined,
-  orchestratorConfig: OrchestratorConfig
+  orchestratorConfig: OrchestratorConfig,
+  options: { resumePendingCompanies?: CompanyEntry[] } = {}
 ): Promise<PipelineResult> {
   const log = logger.orchestrator;
   const { model, tools, checkpointer, projectRoot, verbose = false } = orchestratorConfig;
+  const resumePendingCompanies = options.resumePendingCompanies ?? [];
+  const isResumeMode = resumePendingCompanies.length > 0;
   
   log.info("Pipeline execution starting", { 
     runId,
@@ -280,6 +325,7 @@ export async function runPipeline(
     tools,
     checkpointer,
     projectRoot,
+    resumeMode: isResumeMode,
   });
 
   const threadId = runId;
@@ -297,7 +343,29 @@ export async function runPipeline(
     const maxOutreach = profile.defaultMaxOutreachPerRun || 10;
     const contactsPerCompany = profile.defaultContactsPerCompany || 10;
     
-    const initMessage = `
+    const initMessage = isResumeMode
+      ? `
+      Initialize the recruiting pipeline for run: ${runId}
+
+      RESUME_MODE: true
+      WORKSPACE DIRECTORY: ${workDir}
+      STORAGE DIRECTORY: ${storageDir}
+
+      Resume this run from existing files. Do NOT discover new companies.
+      Do NOT call review_companies.
+
+      Pending companies to process (ONLY these):
+      ${resumePendingCompanies.map((c, i) => `${i + 1}. ${c.name} (${c.domain})`).join("\n")}
+
+      REQUIRED STEPS:
+      1. Read ${workDir}/companies.json
+      2. Process only the pending companies listed above using company-flow
+      3. Keep existing SUCCESS companies unchanged
+      4. Update ${storageDir}/contacted.json with any newly successful companies
+
+      NOTE: Input configuration is already saved to ${workDir}/config.json. Do NOT save any config files.
+      `
+      : `
       Initialize the recruiting pipeline for run: ${runId}
 
       WORKSPACE DIRECTORY: ${workDir}
@@ -363,7 +431,7 @@ export async function runPipeline(
     
     // Start spinner for non-verbose mode
     const s = !verbose ? clack.spinner() : null;
-    if (s) s.start("Finding companies...");
+    if (s) s.start(isResumeMode ? "Processing pending companies..." : "Finding companies...");
     
     // Import Command for HITL resume
     const { Command } = await import("@langchain/langgraph");

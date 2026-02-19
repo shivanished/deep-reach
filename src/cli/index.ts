@@ -21,7 +21,7 @@ import { UserProfileSchema, IdentitySchema, PreferencesSchema } from "@/core/sch
 import { buildTools } from "@/tools/index";
 import { logger, setLogLevel } from "@/utils/logger";
 import * as clack from "@clack/prompts";
-import type { UserProfile } from "@/core/types";
+import type { UserProfile, CompanyEntry } from "@/core/types";
 import type { EmailResult } from "@/services/gmail";
 import type { EmailMessageDraft } from "@/core/types";
 import { findWorkspaceRoot, profileDir, resumePdfPath, runsDir as getRunsDir, storageDir as getStorageDir } from "./workspace";
@@ -81,6 +81,7 @@ program
 program
   .command("run")
   .description("Run the cold-email recruiting pipeline")
+  .argument("[runId]", "Resume an existing run ID (e.g., run0001)")
   .option(
     "--profile <path>",
     "Path to profile directory (defaults to .deepreach/ in workspace)"
@@ -117,9 +118,9 @@ program
     "Show detailed tool-by-tool logging",
     false
   )
-  .action(async (options) => {
+  .action(async (runIdArg: string | undefined, options) => {
     try {
-      await runColdEmailPipeline(options);
+      await runColdEmailPipeline({ ...options, runIdArg });
     } catch (error) {
       clack.log.error(error instanceof Error ? error.message : String(error));
       clack.outro("Exiting.");
@@ -132,6 +133,7 @@ program
 // ============================================================================
 
 interface RunOptions {
+  runIdArg?: string;
   profile?: string;
   dir?: string;
   prompt?: string;
@@ -173,8 +175,15 @@ async function runColdEmailPipeline(options: RunOptions) {
   });
 
   // 1. Generate or use provided run ID
-  const runId = options.runId || generateRunId(root);
-  log.debug("Run ID generated", { runId, wasProvided: !!options.runId });
+  const requestedRunId = options.runIdArg || options.runId;
+  const runId = requestedRunId || generateRunId(root);
+  const runDir = join(getRunsDir(root), runId);
+  const isResumeRun = Boolean(requestedRunId && existsSync(runDir));
+  log.debug("Run ID resolved", {
+    runId,
+    wasProvided: !!requestedRunId,
+    isResumeRun,
+  });
 
   // 2. Load and validate profile
   const profilePath = options.profile
@@ -312,7 +321,7 @@ async function runColdEmailPipeline(options: RunOptions) {
   // 4. Get prompt (from flag or interactive input)
   let userPrompt = options.prompt;
   
-  if (!userPrompt && !options.yes) {
+  if (!isResumeRun && !userPrompt && !options.yes) {
     const promptResult = await clack.text({
       message: "Any preferences for this run?",
       placeholder: "e.g. Focus on Series A AI startups in SF (Enter to skip)",
@@ -326,9 +335,23 @@ async function runColdEmailPipeline(options: RunOptions) {
     userPrompt = promptResult || undefined;
   }
 
+  let resumePendingCompanies: CompanyEntry[] = [];
+  if (isResumeRun) {
+    resumePendingCompanies = await readPendingCompanies(runDir);
+    if (resumePendingCompanies.length === 0) {
+      clack.log.success(`Run ${runId} already complete. No pending companies to resume.`);
+      clack.outro(`Nothing to do for runs/${runId}`);
+      return;
+    }
+  }
+
   // 5. Show config summary and get confirmation
   const summaryLines: string[] = [];
   summaryLines.push(`Run ID: ${runId}`);
+  if (isResumeRun) {
+    summaryLines.push(`Mode: Resume existing run`);
+    summaryLines.push(`Pending companies: ${resumePendingCompanies.length}`);
+  }
   summaryLines.push(`Roles: ${profile.defaultRoles.join(", ")}`);
   if (profile.defaultIndustries && profile.defaultIndustries.length > 0) {
     summaryLines.push(`Industries: ${profile.defaultIndustries.join(", ")}`);
@@ -337,7 +360,7 @@ async function runColdEmailPipeline(options: RunOptions) {
     summaryLines.push(`Locations: ${profile.defaultLocations.join(", ")}`);
   }
   summaryLines.push(`Max outreach: ${profile.defaultMaxOutreachPerRun || 10} companies`);
-  if (userPrompt) {
+  if (!isResumeRun && userPrompt) {
     summaryLines.push("");
     summaryLines.push(`Request: "${userPrompt}"`);
     summaryLines.push("(Your request takes priority; defaults fill in the rest)");
@@ -354,7 +377,6 @@ async function runColdEmailPipeline(options: RunOptions) {
   }
 
   // 6. Create run folder structure
-  const runDir = join(getRunsDir(root), runId);
   const storageDir = getStorageDir(root);
 
   log.debug("Creating directory structure", { runDir, storageDir });
@@ -374,22 +396,26 @@ async function runColdEmailPipeline(options: RunOptions) {
   log.info("Directory structure created", { totalDirs: directories.length });
 
   // 7. Save consolidated config (profile + metadata)
-  const runConfig = {
-    runId,
-    createdAt: new Date().toISOString(),
-    profilePath,
-    userPrompt: userPrompt || null,
-    dryRun: options.dryRun,
-    sendEnabled: options.send,
-    profile, // embed profile directly
-  };
-  
-  await writeFile(
-    join(runDir, "config.json"),
-    JSON.stringify(runConfig, null, 2)
-  );
+  if (!isResumeRun) {
+    const runConfig = {
+      runId,
+      createdAt: new Date().toISOString(),
+      profilePath,
+      userPrompt: userPrompt || null,
+      dryRun: options.dryRun,
+      sendEnabled: options.send,
+      profile, // embed profile directly
+    };
+    
+    await writeFile(
+      join(runDir, "config.json"),
+      JSON.stringify(runConfig, null, 2)
+    );
 
-  log.debug("Configuration saved", { path: join(runDir, "config.json") });
+    log.debug("Configuration saved", { path: join(runDir, "config.json") });
+  } else {
+    log.info("Resume mode - preserving existing config", { runId });
+  }
 
   if (options.dryRun) {
     log.info("Dry run mode - skipping pipeline execution");
@@ -417,6 +443,8 @@ async function runColdEmailPipeline(options: RunOptions) {
     checkpointer: new MemorySaver(),
     projectRoot: root,
     verbose: options.verbose,
+  }, {
+    resumePendingCompanies,
   });
   const pipelineDuration = Math.round(performance.now() - pipelineStart);
 
@@ -442,6 +470,23 @@ async function runColdEmailPipeline(options: RunOptions) {
 // ============================================================================
 // Helpers
 // ============================================================================
+
+async function readPendingCompanies(runDir: string): Promise<CompanyEntry[]> {
+  const companiesPath = join(runDir, "companies.json");
+  if (!existsSync(companiesPath)) {
+    throw new Error(
+      `Cannot resume run: missing companies.json at ${companiesPath}`
+    );
+  }
+
+  const raw = await readFile(companiesPath, "utf-8");
+  const data = JSON.parse(raw);
+  if (!Array.isArray(data)) {
+    throw new Error(`Cannot resume run: companies.json is not an array`);
+  }
+
+  return data.filter((c: CompanyEntry) => c.status !== "SUCCESS");
+}
 
 function throwValidationError(fileName: string, error: import("zod").ZodError): never {
   const lines = error.issues.map((issue) => {

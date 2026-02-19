@@ -201,7 +201,7 @@ export async function runInit() {
       "You'll need API keys from these services:",
       "",
       "  Anthropic  ->  https://console.anthropic.com/settings/keys",
-      "  Hunter.io  ->  https://hunter.io/api-keys",
+      "  Apollo.io  ->  https://docs.apollo.io/reference/introduction",
       "  Tavily     ->  https://app.tavily.com/home",
       "",
       "Gmail credentials are optional (only needed for --send).",
@@ -216,12 +216,12 @@ export async function runInit() {
   });
   if (clack.isCancel(anthropicKey)) return cancel();
 
-  const hunterKey = await clack.text({
-    message: "HUNTER_API_KEY",
-    placeholder: "Your Hunter.io API key",
-    validate: (v) => (!v ? "Hunter API key is required" : undefined),
+  const apolloKey = await clack.text({
+    message: "APOLLO_API_KEY",
+    placeholder: "Your Apollo.io API key",
+    validate: (v) => (!v ? "Apollo API key is required" : undefined),
   });
-  if (clack.isCancel(hunterKey)) return cancel();
+  if (clack.isCancel(apolloKey)) return cancel();
 
   const tavilyKey = await clack.text({
     message: "TAVILY_API_KEY",
@@ -299,7 +299,7 @@ export async function runInit() {
   // .env
   const envLines = [
     `ANTHROPIC_API_KEY=${anthropicKey}`,
-    `HUNTER_API_KEY=${hunterKey}`,
+    `APOLLO_API_KEY=${apolloKey}`,
     `TAVILY_API_KEY=${tavilyKey}`,
   ];
   if (gmailUser) envLines.push(`GMAIL_USER=${gmailUser}`);

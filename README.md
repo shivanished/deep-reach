@@ -2,7 +2,7 @@
 
 AI-powered cold outreach for job seekers. Find companies, discover contacts, and generate personalized emails — all from the command line.
 
-Built on [LangGraph](https://github.com/langchain-ai/langgraphjs) with Claude, Hunter.io, and Tavily.
+Built on [LangGraph](https://github.com/langchain-ai/langgraphjs) with Claude, Apollo.io, and Tavily.
 
 ## Getting Started
 
@@ -11,7 +11,7 @@ Built on [LangGraph](https://github.com/langchain-ai/langgraphjs) with Claude, H
 | Key | What it does | Get it here |
 |-----|-------------|-------------|
 | `ANTHROPIC_API_KEY` | Powers the AI (Claude) | [console.anthropic.com](https://console.anthropic.com/settings/keys) |
-| `HUNTER_API_KEY` | Finds email addresses at companies | [hunter.io](https://hunter.io/api-keys) |
+| `APOLLO_API_KEY` | Finds contacts and work emails at companies | [docs.apollo.io](https://docs.apollo.io/reference/introduction) |
 | `TAVILY_API_KEY` | Web search for company/contact research | [app.tavily.com](https://app.tavily.com/home) |
 
 ### 2. Initialize and run
@@ -19,6 +19,7 @@ Built on [LangGraph](https://github.com/langchain-ai/langgraphjs) with Claude, H
 ```bash
 npx deepreach               # one-time setup (profile, resume, API keys)
 npx deepreach run            # find companies, contacts, and draft emails
+npx deepreach run run0001    # resume an interrupted run (processes non-SUCCESS companies only)
 npx deepreach send run0001   # review and send the drafts
 ```
 
@@ -29,7 +30,7 @@ The setup wizard walks you through your profile, target roles/industries, resume
 | Command | Description |
 |---------|-------------|
 | `deepreach` | Interactive setup wizard (same as `deepreach init`) |
-| `deepreach run` | Find companies, discover contacts, draft emails |
+| `deepreach run [run-id]` | Start a new run, or resume an existing run by ID |
 | `deepreach send <run-id>` | Send emails from a previous run |
 | `deepreach edit <target>` | Edit config (`profile`, `preferences`, `resume`, `env`) |
 
@@ -52,7 +53,7 @@ If you hit Anthropic 429 errors (input tokens/minute), lower fan-out with these 
 
 1. **Finds companies** matching your preferences via web search
 2. **Shows you the list** for approval (you can reject and give feedback)
-3. **Processes each company** in parallel — researches the company, finds contacts via Hunter.io, and drafts personalized emails using your resume and their background
+3. **Processes each company** in parallel — researches the company, finds contacts via Apollo.io, and drafts personalized emails using your resume and their background
 4. **Saves drafts** to `runs/<run-id>/drafts.json` for review before sending
 
 Previously contacted companies are tracked in `storage/contacted.json` and automatically skipped.
@@ -90,7 +91,7 @@ my-outreach/
 ## Requirements
 
 - Node.js >= 18
-- API keys: Anthropic, Hunter.io, Tavily
+- API keys: Anthropic, Apollo.io, Tavily
 - Gmail App Password (only for sending)
 
 ## License
