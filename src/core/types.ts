@@ -26,7 +26,7 @@ export interface Preferences {
   defaultRoles: string[];
   defaultLocations?: string[];
   defaultIndustries?: string[];
-  defaultTone?: "professional" | "casual" | "enthusiastic";
+  defaultTone?: string;
   defaultMaxOutreachPerRun?: number;
   defaultContactsPerCompany?: number;
   hardExclusions?: string[];

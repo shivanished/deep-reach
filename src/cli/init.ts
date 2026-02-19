@@ -124,9 +124,21 @@ export async function runInit() {
       { value: "professional", label: "Professional" },
       { value: "casual", label: "Casual" },
       { value: "enthusiastic", label: "Enthusiastic" },
+      { value: "__custom__", label: "Custom" },
     ],
   });
   if (clack.isCancel(tone)) return cancel();
+
+  let finalTone = tone;
+  if (tone === "__custom__") {
+    const customTone = await clack.text({
+      message: "Custom email tone",
+      placeholder: "casual, direct",
+      validate: (v) => (!v?.trim() ? "Tone cannot be empty" : undefined),
+    });
+    if (clack.isCancel(customTone)) return cancel();
+    finalTone = customTone.trim();
+  }
 
   const maxOutreach = await clack.text({
     message: "Max companies per run",
@@ -261,7 +273,7 @@ export async function runInit() {
   };
   if (locations.length > 0) preferences.defaultLocations = locations;
   if (industries.length > 0) preferences.defaultIndustries = industries;
-  preferences.defaultTone = tone;
+  preferences.defaultTone = finalTone;
   preferences.defaultMaxOutreachPerRun = Number(maxOutreach);
   preferences.defaultContactsPerCompany = Number(contactsPerCompany);
   preferences.hardExclusions = [];

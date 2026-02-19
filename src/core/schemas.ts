@@ -24,7 +24,7 @@ export const PreferencesSchema = z.object({
   defaultRoles: z.array(z.string()),
   defaultLocations: z.array(z.string()).optional(),
   defaultIndustries: z.array(z.string()).optional(),
-  defaultTone: z.enum(["professional", "casual", "enthusiastic"]).optional(),
+  defaultTone: z.string().trim().min(1).optional(),
   defaultMaxOutreachPerRun: z.number().optional(),
   defaultContactsPerCompany: z.number().optional(),
   hardExclusions: z.array(z.string()).optional(),
