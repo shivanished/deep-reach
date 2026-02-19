@@ -35,6 +35,19 @@ The setup wizard walks you through your profile, target roles/industries, resume
 
 Run any command with `--help` for all available options.
 
+## Rate Limit Tuning
+
+If you hit Anthropic 429 errors (input tokens/minute), lower fan-out with these optional env vars in `.env`:
+
+| Variable | Default | What it controls |
+|---------|---------|------------------|
+| `DEEPREACH_MODEL_MAX_CONCURRENCY` | `2` | Max concurrent Claude calls from the LangChain model client |
+| `DEEPREACH_MODEL_MAX_RETRIES` | `10` | Retry attempts for transient model errors (including rate limits) |
+| `DEEPREACH_RATE_LIMIT_BACKOFF_MS` | `15000` | Base cooldown (ms) before retrying after a 429/rate-limit error |
+| `DEEPREACH_RATE_LIMIT_BACKOFF_JITTER_MS` | `5000` | Extra random cooldown (ms) added to spread retries |
+| `DEEPREACH_COMPANY_CONCURRENCY` | `2` | Max companies processed in parallel by the orchestrator |
+| `DEEPREACH_CONTACT_CONCURRENCY` | `2` | Max contacts personalized in parallel per company |
+
 ## How It Works
 
 1. **Finds companies** matching your preferences via web search

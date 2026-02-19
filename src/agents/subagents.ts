@@ -9,6 +9,11 @@ import type { StructuredTool } from "@langchain/core/tools";
 // System Prompts for Subagents
 // ============================================================================
 
+const CONTACT_PERSONALIZATION_CONCURRENCY = parsePositiveIntEnv(
+  "DEEPREACH_CONTACT_CONCURRENCY",
+  2
+);
+
 export const CONTACT_PERSONALIZATION_PROMPT = `You research ONE person and draft a personalized cold email.
 
 IMPORTANT: You will receive workspace path, company info, and contact info in your task.
@@ -125,16 +130,12 @@ STEP 2 - CONTACTS:
 - Take the FIRST 10 people returned (engineers from IT department)
 - Save to <workspace>/contacts/<slug>.json as array of contacts with: name, title, email
 
-STEP 3 - PARALLEL CONTACT PERSONALIZATION (CRITICAL):
-After getting contacts, invoke task() MULTIPLE TIMES IN A SINGLE RESPONSE.
-Each task processes one contact using the "contact-personalization" subagent.
-
-IMPORTANT: Issue ALL task calls together in one response for parallel execution.
-
-Example (all at once):
-  task("contact-personalization", "Workspace: /path/to/runs/run-xxx. Company: Acme Corp (acme.com) - AI startup building dev tools. Contact: John Smith, Sr Engineer, john@acme.com")
-  task("contact-personalization", "Workspace: /path/to/runs/run-xxx. Company: Acme Corp (acme.com) - AI startup building dev tools. Contact: Jane Doe, Staff Engineer, jane@acme.com")
-  ... (all contacts in parallel)
+STEP 3 - CONTACT PERSONALIZATION WITH RATE LIMITING (CRITICAL):
+After getting contacts, invoke task() for each contact using the "contact-personalization" subagent.
+Use controlled batching to avoid model rate limits:
+- Process at most ${CONTACT_PERSONALIZATION_CONCURRENCY} contact-personalization tasks in parallel
+- Wait for each batch to finish before starting the next batch
+- Repeat until all contacts are processed
 
 Include in each task message:
 - Workspace path (the subagent will read profile from <workspace>/config.json)
@@ -151,7 +152,15 @@ STEP 4 - MARK SUCCESS:
   * Set processedAt="ISO timestamp"
 - This tells the orchestrator this company was successfully processed
 
-Move fast. This is one of 5 parallel company workflows.`;
+Prioritize reliability over speed.`;
+
+function parsePositiveIntEnv(name: string, defaultValue: number): number {
+  const value = process.env[name];
+  if (!value) return defaultValue;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return defaultValue;
+  return parsed;
+}
 
 // ============================================================================
 // Subagent Definitions

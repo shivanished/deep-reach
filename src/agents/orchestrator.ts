@@ -19,7 +19,10 @@ import { join } from "path";
 // Orchestrator Configuration
 // ============================================================================
 
-const COMPANY_CONCURRENCY_LIMIT = 3;
+const COMPANY_CONCURRENCY_LIMIT = parsePositiveIntEnv(
+  "DEEPREACH_COMPANY_CONCURRENCY",
+  2
+);
 
 const ORCHESTRATOR_PROMPT = `You coordinate a recruiting outreach pipeline.
 
@@ -112,6 +115,14 @@ When all tasks complete, summarize results:
 - Total drafts generated
 
 Use your built-in file system tools to read/write artifacts.`;
+
+function parsePositiveIntEnv(name: string, defaultValue: number): number {
+  const value = process.env[name];
+  if (!value) return defaultValue;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return defaultValue;
+  return parsed;
+}
 
 export interface OrchestratorConfig {
   model: BaseLanguageModel;
@@ -331,8 +342,9 @@ export async function runPipeline(
       0. Check ${storageDir}/contacted.json for previously contacted companies
       1. Find ${maxOutreach} NEW companies matching preferences (exclude contacted ones)
          - Save to ${workDir}/companies.json (single file with all companies)
-      2. Process all ${maxOutreach} companies in PARALLEL using task("company-flow", ...)
+      2. Process all ${maxOutreach} companies in controlled batches (max ${COMPANY_CONCURRENCY_LIMIT} at a time) using task("company-flow", ...)
          - Each company flow: research → contacts → drafts
+         - Wait for each batch to finish before starting the next batch
          - Each will update its entry in companies.json with status
       3. Update ${storageDir}/contacted.json with successfully processed companies
       

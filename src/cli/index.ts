@@ -270,13 +270,43 @@ async function runColdEmailPipeline(options: RunOptions) {
   }
 
   const modelName = "claude-sonnet-4-20250514";
-  log.info("Initializing model", { model: modelName, temperature: 0.7 });
+  const modelMaxConcurrency = parsePositiveIntEnv("DEEPREACH_MODEL_MAX_CONCURRENCY", 2);
+  const modelMaxRetries = parsePositiveIntEnv("DEEPREACH_MODEL_MAX_RETRIES", 10);
+  const rateLimitBackoffMs = parsePositiveIntEnv("DEEPREACH_RATE_LIMIT_BACKOFF_MS", 15000);
+  const rateLimitBackoffJitterMs = parsePositiveIntEnv("DEEPREACH_RATE_LIMIT_BACKOFF_JITTER_MS", 5000);
+  log.info("Initializing model", {
+    model: modelName,
+    temperature: 0.7,
+    maxConcurrency: modelMaxConcurrency,
+    maxRetries: modelMaxRetries,
+    rateLimitBackoffMs,
+    rateLimitBackoffJitterMs,
+  });
   
   const model = new ChatAnthropic({
     model: modelName,
     temperature: 0.7,
     apiKey,
-    maxRetries: 6,
+    maxRetries: modelMaxRetries,
+    maxConcurrency: modelMaxConcurrency,
+    onFailedAttempt: async (error: unknown) => {
+      const status = extractStatusCode(error);
+      const isRateLimited = status === 429 || isRateLimitError(error);
+
+      if (isRateLimited) {
+        const delay = rateLimitBackoffMs + randomInt(0, rateLimitBackoffJitterMs);
+        logger.cli.warn("Rate limit encountered; backing off before retry", {
+          status,
+          delayMs: delay,
+        });
+        await sleep(delay);
+        return;
+      }
+
+      if (status !== undefined && status >= 400 && status < 500 && status !== 408) {
+        throw toError(error);
+      }
+    },
   });
 
   // 4. Get prompt (from flag or interactive input)
@@ -442,6 +472,45 @@ function generateRunId(root: string): string {
 
   const nextNum = maxNum + 1;
   return `run${nextNum.toString().padStart(4, "0")}`;
+}
+
+function parsePositiveIntEnv(name: string, defaultValue: number): number {
+  const value = process.env[name];
+  if (!value) return defaultValue;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 1) return defaultValue;
+  return parsed;
+}
+
+function extractStatusCode(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const err = error as any;
+  if (typeof err.status === "number") return err.status;
+  if (err.response && typeof err.response.status === "number") return err.response.status;
+  return undefined;
+}
+
+function isRateLimitError(error: unknown): boolean {
+  const status = extractStatusCode(error);
+  if (status === 429) return true;
+  if (!error || typeof error !== "object") return false;
+  const err = error as any;
+  const message = typeof err.message === "string" ? err.message.toLowerCase() : "";
+  return message.includes("rate limit") || message.includes("too many requests");
+}
+
+function toError(error: unknown): Error {
+  if (error instanceof Error) return error;
+  return new Error(String(error));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function randomInt(min: number, max: number): number {
+  if (max <= min) return min;
+  return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
 function printSuccessSummary(
